@@ -38,6 +38,7 @@ class StockTradingEnv(gym.Env):
         iteration="",
         initial_buy=False,  # Use half of initial amount to buy
         hundred_each_trade=True,  # The number of shares per lot must be an integer multiple of 100
+        random_seed=None,
     ):
         self.day = day
         self.df = df
@@ -79,7 +80,7 @@ class StockTradingEnv(gym.Env):
         self.portfolio_memory = []
         self.actions_memory = []
         self.date_memory = [self._get_date()]
-        self._seed()
+        # self.seed = self._seed(seed=random_seed)[0]
 
     def _sell_stock(self, index, action):
         def _do_sell_normal():
@@ -498,7 +499,11 @@ class StockTradingEnv(gym.Env):
             df_actions = pd.DataFrame({"date": date_list, "actions": action_list})
         return df_actions
 
-    def _seed(self, seed=None):
+    # def _seed(self, seed=None):
+    #     self.np_random, seed = seeding.np_random(seed)
+    #     return [seed]
+
+    def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
 
