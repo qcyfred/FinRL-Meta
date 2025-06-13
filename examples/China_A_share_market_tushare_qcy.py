@@ -7,6 +7,31 @@ from IPython import display
 
 display.set_matplotlib_formats("svg")
 
+# 添加随机种子设置
+import numpy as np
+import random
+import torch
+import os
+
+def set_global_seed(seed=42):
+    """设置全局随机种子以确保结果可复现"""
+    # Python random
+    random.seed(seed)
+    # Numpy
+    np.random.seed(seed)
+    # PyTorch
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    # 确保CUDA操作的确定性
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    # 设置环境变量
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    
+# 在程序开始时设置随机种子
+set_global_seed(42)  # 可以改为任何你想要的数字
+
 from meta import config
 from meta.data_processor import DataProcessor
 from main import check_and_make_directories
@@ -15,7 +40,6 @@ from meta.env_stock_trading.env_stocktrading_China_A_shares import (
     StockTradingEnv,
 )
 from agents.stablebaselines3_models import DRLAgent
-import os
 from typing import List
 from argparse import ArgumentParser
 from meta import config
@@ -162,6 +186,7 @@ env_kwargs = {
     "print_verbosity": 1,
     "initial_buy": True,
     "hundred_each_trade": True,
+    "random_seed": 42,  # 添加环境随机种子
 }
 
 e_train_gym = StockTradingEnv(df=train, **env_kwargs)
@@ -203,7 +228,7 @@ PPO_PARAMS = {
     "ent_coef": 0.01,  # 增加熵系数鼓励探索
 }
 
-model_ppo = agent_ppo.get_model("ppo", model_kwargs=PPO_PARAMS)
+model_ppo = agent_ppo.get_model("ppo", model_kwargs=PPO_PARAMS, seed=42)
 
 trained_ppo = agent_ppo.train_model(
     model=model_ppo, tb_log_name="ppo_single_stock", total_timesteps=100000
