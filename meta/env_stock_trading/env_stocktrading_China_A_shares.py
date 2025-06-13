@@ -434,7 +434,9 @@ class StockTradingEnv(gym.Env):
             # qcy修改，这里有点怪
             date = self.data.time.unique()[0]
         else:
-            date = self.data.date
+            # date = self.data.date
+            date = self.data.time # qcy修改，这里有点怪
+            
         return date
 
     def get_portfolio_df(self):
