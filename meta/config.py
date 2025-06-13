@@ -27,6 +27,14 @@ INDICATORS = [
     "close_60_sma",
 ]
 
+INDICATORS_OMK = [
+    'adx_14',
+    'cci_14',
+    'above_ma_120d',
+    'ma_20d_up',
+]
+
+
 
 # Model Parameters
 A2C_PARAMS = {"n_steps": 5, "ent_coef": 0.01, "learning_rate": 0.0007}
