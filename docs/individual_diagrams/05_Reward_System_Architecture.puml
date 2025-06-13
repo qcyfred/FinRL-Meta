@@ -1,0 +1,109 @@
+@startuml
+ Reward System Design
+!allowmixing
+
+title Reward System Architecture
+
+package "Reward Calculation System" {
+    
+    interface IRewardCalculator {
+        +calculate_reward(prev_value, current_value): float
+        +calculate_final_reward(): float
+    }
+    
+    class InformationRatioReward {
+        +strategy_returns: list
+        +benchmark_returns: list
+        +tracking_errors: list
+        --
+        +calculate_reward(): float
+        +_get_excess_return(): float
+        +_get_tracking_error(): float
+    }
+    
+    class MultiFactorReward {
+        +return_weight: float
+        +risk_penalty_weight: float
+        +trade_quality_weight: float
+        --
+        +calculate_reward(): float
+        +_calculate_return_reward(): float
+        +_calculate_risk_penalty(): float
+    }
+    
+    class TradeQualityReward {
+        +trade_start_value: float
+        +trade_start_day: int
+        +trade_returns: list
+        --
+        +calculate_trade_reward(): float
+        +_evaluate_trade_quality(): float
+    }
+    
+    class FinalRewardCalculator {
+        +final_reward_weight: float
+        +daily_returns: list
+        +benchmark_returns: list
+        --
+        +calculate_final_reward(): float
+        +_calculate_excess_return(): float
+        +_calculate_sharpe_bonus(): float
+        +_calculate_trade_efficiency(): float
+    }
+}
+
+IRewardCalculator <|-- InformationRatioReward
+IRewardCalculator <|-- MultiFactorReward
+
+package "Reward Flow" {
+    start
+    :Market Action Executed;
+    
+    if (Reward Method?) then (Information Ratio)
+        :Calculate Strategy Return;
+        :Calculate Benchmark Return;
+        :Calculate Excess Return;
+        :Calculate Tracking Error;
+        :IR = Excess Return / Tracking Error;
+        :Base Reward = IR * 0.01;
+    else (Multi-Factor)
+        :Calculate Return Component;
+        :Calculate Risk Penalty;
+        :Combine Components;
+    endif
+    
+    :Add Trade Quality Reward;
+    
+    if (Episode Terminal?) then (Yes)
+        :Calculate Final Reward;
+        :Add to Last Step Reward;
+    else (No)
+        :Return Immediate Reward;
+    endif
+    
+    stop
+}
+
+note top of InformationRatioReward
+  基于信息比率的奖励方法
+  - 衡量策略相对基准的超额收益
+  - 考虑跟踪误差（风险调整）
+  - 适合相对收益策略
+end note
+
+note top of MultiFactorReward
+  多因子奖励方法
+  - 直接优化收益率
+  - 独立的风险惩罚机制
+  - 可配置的权重系统
+end note
+
+note bottom of FinalRewardCalculator
+  终极奖励在episode结束时计算
+  - 基于整个交易周期的表现
+  - 包含夏普比率、胜率等指标
+  - 数值尺度与即时奖励统一
+end note
+
+@enduml
+

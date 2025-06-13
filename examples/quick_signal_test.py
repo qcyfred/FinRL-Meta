@@ -53,11 +53,21 @@ except ImportError as e:
 
 # 策略配置（直接在文件中定义，避免导入问题）
 REWARD_CONFIGS = {
-    "balanced": {
-        'return': 1.0,
-        'sharpe': 0.2,
-        'max_drawdown': -1.0,
-        'volatility': -0.1
+    "information_ratio": {
+        'method': 'information_ratio',
+        'return_weight': 1.0,
+        'risk_penalty_weight': 0.5,
+        'trade_quality_weight': 0.1,
+        'final_reward_weight': 2.0,
+        'benchmark': 'buy_hold'
+    },
+    "multi_factor": {
+        'method': 'multi_factor',
+        'return_weight': 1.0,
+        'risk_penalty_weight': 0.8,
+        'trade_quality_weight': 0.15,
+        'final_reward_weight': 1.5,
+        'benchmark': 'buy_hold'
     }
 }
 
@@ -213,7 +223,7 @@ def quick_train_test(train_data, trade_data):
             "turbulence_threshold": None,
             "make_plots": False,  # 快速测试时不绘图
             "print_verbosity": 1,
-            "reward_weights": REWARD_CONFIGS["balanced"],
+            "reward_config": REWARD_CONFIGS["information_ratio"],
             "random_seed": 42,
         }
         
@@ -315,7 +325,7 @@ def run_environment_test():
             "buy_cost_pct": 0.001,
             "sell_cost_pct": 0.001,
             "tech_indicator_list": ['macd', 'boll_ub', 'boll_lb', 'rsi_30', 'cci_30', 'dx_30', 'close_30_sma', 'close_60_sma'],
-            "reward_weights": {'return': 1.0, 'sharpe': 0.1, 'max_drawdown': -0.5, 'volatility': -0.1},
+            "reward_config": {'method': 'information_ratio', 'return_weight': 1.0, 'risk_penalty_weight': 0.5, 'trade_quality_weight': 0.1, 'final_reward_weight': 2.0, 'benchmark': 'buy_hold'},
         }
         
         env = SignalTradingEnv(df=test_data, **env_kwargs)

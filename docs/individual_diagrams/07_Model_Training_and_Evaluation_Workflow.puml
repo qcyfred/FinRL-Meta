@@ -1,0 +1,104 @@
+@startuml
+ Model Training and Evaluation Workflow
+!allowmixing
+
+title Model Training and Evaluation Workflow
+
+actor User as user
+participant "Main Program" as main
+participant "DataProcessor" as dp
+participant "SignalTradingEnv" as env
+participant "DRLAgent" as agent
+participant "RL Models" as models
+participant "ModelEvaluator" as eval
+database "Results" as results
+
+user -> main: Start signal_trading_main.py
+
+activate main
+main -> dp: download_data(ticker_list)
+activate dp
+dp -> dp: clean_data()
+dp -> dp: add_technical_indicator()
+dp --> main: processed_data
+deactivate dp
+
+main -> main: split train/trade data
+
+loop for each model (PPO, A2C, DQN)
+    main -> env: create training environment
+    activate env
+    
+    main -> agent: create agent(env)
+    activate agent
+    
+    agent -> models: get_model(model_name, config)
+    activate models
+    models --> agent: untrained_model
+    
+    agent -> models: train_model(timesteps=50000)
+    models -> env: step interactions
+    env -> env: calculate rewards
+    env --> models: (state, reward, done, info)
+    models --> agent: trained_model
+    deactivate models
+    
+    agent --> main: trained_model
+    deactivate agent
+    deactivate env
+end
+
+main -> main: save all trained models
+
+loop for each trained model
+    main -> eval: evaluate_model(model, trade_data)
+    activate eval
+    
+    eval -> env: create trading environment  
+    activate env
+    
+    eval -> agent: DRL_prediction(model, env)
+    activate agent
+    
+    loop trading period
+        agent -> env: predict action
+        env -> env: execute trade
+        env -> env: update portfolio
+        env --> agent: new state
+    end
+    
+    agent --> eval: (account_value, actions)
+    deactivate agent
+    deactivate env
+    
+    eval -> eval: calculate_performance_metrics()
+    eval --> main: performance_stats
+    deactivate eval
+end
+
+main -> main: compare_with_benchmark()
+main -> main: generate_visualizations()
+main -> results: save results
+main --> user: completed with results
+
+deactivate main
+
+note over main
+  Key Performance Metrics:
+  - Total Return
+  - Sharpe Ratio  
+  - Max Drawdown
+  - Volatility
+  - Trade Count
+  - Win Rate
+end note
+
+note over env
+  Environment Features:
+  - Discrete action space {0,1}
+  - 16D state space
+  - Multi-factor reward system
+  - Real-time risk monitoring
+end note
+
+@enduml 

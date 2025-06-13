@@ -1,0 +1,89 @@
+@startuml
+ Data Flow and Processing Pipeline
+!allowmixing
+
+title Data Flow and Processing Pipeline
+
+start
+
+:Raw Market Data\n(Tushare);
+
+:Basic OHLCV Data;
+note right
+  - time, tic
+  - open, high, low, close
+  - volume
+end note
+
+:Data Cleaning;
+partition "Data Processing Pipeline" {
+    :Remove Missing Values;
+    :Fill Forward/Backward;
+    :Data Type Conversion;
+}
+
+:Technical Indicators;
+partition "Feature Engineering" {
+    :MACD Calculation;
+    :Bollinger Bands;
+    :RSI (30-day);
+    :CCI (30-day);
+    :DX (30-day);
+    :SMA (30/60-day);
+}
+
+:Train/Test Split;
+
+fork
+    :Training Data\n(2015-2019);
+    :Training Environment;
+    partition "Training Loop" {
+        repeat
+            :Get State (16D);
+            :Agent Action (0|1);
+            :Environment Step;
+            :Calculate Reward;
+            :Update State;
+        repeat while (Episode continues?)
+        
+        :Episode Terminal;
+        :Calculate Final Reward;
+        :Reset Environment;
+    }
+    :Trained Models;
+
+fork again
+    :Trading Data\n(2019-2020);
+    :Trading Environment;
+    partition "Evaluation Loop" {
+        repeat
+            :Get State (16D);
+            :Model Prediction (0|1);
+            :Execute Trade;
+            :Record Performance;
+            :Update Portfolio;
+        repeat while (Trading period continues?)
+        
+        :Final Portfolio Value;
+        :Performance Metrics;
+    }
+    
+end fork
+
+:Performance Comparison;
+:Visualization & Results;
+
+stop
+
+note bottom
+  Key Data Transformations:
+  1. Raw Price → Technical Indicators
+  2. Market Data → State Vector (16D)
+  3. Actions → Portfolio Changes
+  4. Portfolio Changes → Rewards
+  5. Rewards → Model Updates (Training)
+  6. Model → Trading Decisions (Evaluation)
+end note
+
+@enduml
+

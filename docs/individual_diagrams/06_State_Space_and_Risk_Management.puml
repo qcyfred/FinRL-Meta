@@ -1,0 +1,104 @@
+@startuml
+ System State Management
+!allowmixing
+
+title State Space and Risk Management
+
+package "State Management System" {
+    
+    class StateManager {
+        +state_dim: int = 16
+        +lagged_risk_indicators: list[4]
+        --
+        +_initiate_state(): list[16]
+        +_update_state(): list[16]
+        +_update_lagged_risk_indicators(): void
+    }
+    
+    class RiskManager {
+        +max_drawdown: float
+        +current_drawdown: float
+        +peak_value: float
+        +daily_returns: list
+        +trade_returns: list
+        --
+        +_calculate_risk_indicators(): tuple[4]
+        +_update_peak_value(): void
+        +_calculate_drawdown(): void
+        +_calculate_volatility(): float
+        +_calculate_sharpe(): float
+    }
+    
+    class PositionManager {
+        +position: int {0|1}
+        +cash: float
+        +stock_num: float
+        +trades: int
+        +cost: float
+        --
+        +_go_long(): void
+        +_go_neutral(): void
+        +_get_total_asset(): float
+    }
+}
+
+package "State Vector (16D)" {
+    rectangle "Component 1: Basic Portfolio Info" {
+        rectangle "Index 0-3" {
+            rectangle "0: 现金余额"
+            rectangle "1: 股票价格"
+            rectangle "2: 持仓状态 0|1"
+            rectangle "3: 股票数量"
+        }
+    }
+    
+    rectangle "Component 2: Technical Indicators" {
+        rectangle "Index 4-11" {
+            rectangle "4: MACD"
+            rectangle "5: 布林带上轨"
+            rectangle "6: 布林带下轨"
+            rectangle "7: RSI_30"
+            rectangle "8: CCI_30"
+            rectangle "9: DX_30"
+            rectangle "10: SMA_30"
+            rectangle "11: SMA_60"
+        }
+    }
+    
+    rectangle "Component 3: Lagged Risk Indicators" {
+        rectangle "Index 12-15" {
+            rectangle "12: 最大回撤"
+            rectangle "13: 当前回撤"
+            rectangle "14: 波动率"
+            rectangle "15: 夏普比率"
+        }
+    }
+}
+
+note right of StateManager
+  解决Shift问题：
+  - 使用延迟的风控指标
+  - 避免未来信息泄露
+  - 保证时间序列一致性
+end note
+
+note right of RiskManager
+  实时风控监控：
+  - 动态回撤计算
+  - 滚动风险指标
+  - 历史峰值追踪
+end note
+
+note right of PositionManager
+  交易执行逻辑：
+  - 满仓/空仓二元决策
+  - 交易成本计算
+  - 资产价值更新
+end note
+
+StateManager --> "State Vector (16D)"
+RiskManager --> StateManager
+PositionManager --> StateManager
+
+@enduml
+

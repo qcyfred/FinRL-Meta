@@ -1,0 +1,724 @@
+@startuml Signal Trading System - Overall Architecture
+!allowmixing
+
+title Signal Trading System - Overall Architecture
+
+package "Data Layer" {
+    class DataProcessor {
+        +download_data()
+        +clean_data()
+        +add_technical_indicator()
+        +data_split()
+    }
+    
+    class TushareAPI {
+        +get_stock_data()
+        +real_time_data()
+    }
+    
+    database "Raw Data" as RawData
+    database "Processed Data" as ProcessedData
+}
+
+package "Environment Layer" {
+    class SignalTradingEnv {
+        +state_space: Box(16,)
+        +action_space: Discrete(2)
+        +step()
+        +reset()
+        +_calculate_reward()
+        +_go_long()
+        +_go_neutral()
+    }
+    
+    package "Reward System" {
+        class InformationRatioReward
+        class MultiFactorReward
+        class FinalReward
+    }
+    
+    package "Risk Management" {
+        class RiskIndicators {
+            +max_drawdown
+            +current_drawdown
+            +volatility
+            +sharpe_ratio
+        }
+    }
+}
+
+package "Agent Layer" {
+    class DRLAgent {
+        +get_model()
+        +train_model()
+        +DRL_prediction()
+    }
+    
+    package "RL Models" {
+        class PPO
+        class A2C
+        class DQN
+    }
+}
+
+package "Evaluation Layer" {
+    class ModelEvaluator {
+        +evaluate_model()
+        +performance_comparison()
+        +benchmark_comparison()
+    }
+    
+    class Visualizer {
+        +plot_comparison()
+        +save_results()
+    }
+}
+
+package "Configuration" {
+    class RewardConfig {
+        +method: str
+        +weights: dict
+        +benchmark: str
+    }
+    
+    class ModelConfig {
+        +hyperparameters
+        +training_steps
+    }
+}
+
+' Relationships
+DataProcessor --> ProcessedData
+TushareAPI --> RawData
+RawData --> DataProcessor
+ProcessedData --> SignalTradingEnv
+
+SignalTradingEnv --> InformationRatioReward
+SignalTradingEnv --> MultiFactorReward
+SignalTradingEnv --> FinalReward
+SignalTradingEnv --> RiskIndicators
+
+DRLAgent --> SignalTradingEnv
+DRLAgent --> PPO
+DRLAgent --> A2C
+DRLAgent --> DQN
+
+ModelEvaluator --> DRLAgent
+Visualizer --> ModelEvaluator
+
+RewardConfig --> SignalTradingEnv
+ModelConfig --> DRLAgent
+
+@enduml
+
+@startuml Signal Trading System - Main Workflow
+!allowmixing
+
+title Signal Trading System - Main Workflow
+
+start
+
+:Load Configuration;
+note right
+  - reward_config
+  - model_config  
+  - env_kwargs
+end note
+
+:Data Preparation;
+partition "Data Processing" {
+    :Download Stock Data\n(Tushare API);
+    :Clean & Fill Missing Data;
+    :Add Technical Indicators\n(MACD, RSI, Bollinger, etc.);
+    :Split Train/Trade Data;
+}
+
+:Create Training Environment;
+note right
+  SignalTradingEnv with:
+  - Action: Discrete(2)
+  - State: 16-dimensional
+  - Reward: Multi-factor
+end note
+
+partition "Model Training" {
+    fork
+        :Train PPO Model;
+    fork again
+        :Train A2C Model;
+    fork again
+        :Train DQN Model;
+    end fork
+    
+    :Save Trained Models;
+}
+
+partition "Model Evaluation" {
+    :Create Trading Environment;
+    
+    fork
+        :Evaluate PPO;
+    fork again
+        :Evaluate A2C;
+    fork again
+        :Evaluate DQN;
+    end fork
+    
+    :Calculate Performance Metrics;
+    note left
+      - Total Return
+      - Sharpe Ratio
+      - Max Drawdown
+      - Volatility
+      - Trade Count
+    end note
+}
+
+:Compare with Benchmark\n(Buy & Hold);
+
+:Generate Visualizations;
+note right
+  - Performance comparison
+  - Portfolio curves
+  - Action distributions
+  - Risk metrics
+end note
+
+:Save Results;
+partition "Output" {
+    :Model Files (.zip);
+    :Performance CSV;
+    :Account Value CSV;
+    :Actions CSV;
+    :Visualization PNG;
+    :Final Results (JSON/Pickle);
+}
+
+stop
+
+@enduml
+
+@startuml SignalTradingEnv - Detailed Design
+!allowmixing
+
+title SignalTradingEnv - Detailed Component Design
+
+class SignalTradingEnv {
+    .. Core Properties ..
+    +action_space: Discrete(2)
+    +observation_space: Box(16,)
+    +state_dim: int = 16
+    +reward_config: dict
+    
+    .. State Variables ..
+    +state: list[16]
+    +position: int {0|1}
+    +immediate_reward: float
+    +trades: int
+    +cost: float
+    
+    .. Memory & Tracking ..
+    +portfolio_memory: list
+    +actions_memory: list
+    +daily_returns: list
+    +trade_returns: list
+    +benchmark_returns: list
+    
+    .. Risk Indicators ..
+    +max_drawdown: float
+    +current_drawdown: float
+    +peak_value: float
+    +lagged_risk_indicators: list[4]
+    
+    .. Core Methods ..
+    +step(action): tuple
+    +reset(): state
+    +_calculate_reward(): float
+    +_calculate_final_reward(): float
+    
+    .. Action Methods ..
+    +_go_long(): void
+    +_go_neutral(): void
+    
+    .. State Methods ..
+    +_initiate_state(): list
+    +_update_state(): list
+    +_update_lagged_risk_indicators(): void
+    
+    .. Reward Methods ..
+    +_calculate_information_ratio_reward(): float
+    +_calculate_multi_factor_reward(): float
+    +_calculate_trade_quality_reward(): float
+    
+    .. Risk Methods ..
+    +_calculate_risk_indicators(): tuple
+    +_get_benchmark_return(): float
+    
+    .. Utility Methods ..
+    +_get_total_asset(): float
+    +_get_current_price(): float
+    +_get_date(): str
+    +get_portfolio_df(): DataFrame
+}
+
+package "State Space (16D)" {
+    rectangle "Basic Info (4D)" {
+        rectangle "现金余额"
+        rectangle "股票价格" 
+        rectangle "持仓状态"
+        rectangle "股票数量"
+    }
+    
+    rectangle "Technical Indicators (8D)" {
+        rectangle "MACD"
+        rectangle "布林带上轨"
+        rectangle "布林带下轨"
+        rectangle "RSI_30"
+        rectangle "CCI_30"
+        rectangle "DX_30"
+        rectangle "SMA_30"
+        rectangle "SMA_60"
+    }
+    
+    rectangle "Risk Indicators (4D)" {
+        rectangle "最大回撤"
+        rectangle "当前回撤"
+        rectangle "波动率"
+        rectangle "夏普比率"
+    }
+}
+
+package "Action Space" {
+    rectangle "Discrete(2)" {
+        rectangle "0: 无持仓/卖出"
+        rectangle "1: 多头持有/买入"
+    }
+}
+
+package "Reward Components" {
+    rectangle "Information Ratio Method" {
+        rectangle "超额收益 / 跟踪误差"
+        rectangle "基准: Buy & Hold"
+    }
+    
+    rectangle "Multi-Factor Method" {
+        rectangle "收益率奖励"
+        rectangle "风险惩罚"
+        rectangle "交易质量"
+    }
+    
+    rectangle "Final Reward" {
+        rectangle "策略vs基准超额收益"
+        rectangle "夏普比率奖励"
+        rectangle "交易效率奖励"
+    }
+}
+
+SignalTradingEnv --> "State Space (16D)"
+SignalTradingEnv --> "Action Space"
+SignalTradingEnv --> "Reward Components"
+
+@enduml
+
+@startuml Data Flow and Processing Pipeline
+!allowmixing
+
+title Data Flow and Processing Pipeline
+
+start
+
+:Raw Market Data\n(Tushare);
+
+:Basic OHLCV Data;
+note right
+  - time, tic
+  - open, high, low, close
+  - volume
+end note
+
+:Data Cleaning;
+partition "Data Processing Pipeline" {
+    :Remove Missing Values;
+    :Fill Forward/Backward;
+    :Data Type Conversion;
+}
+
+:Technical Indicators;
+partition "Feature Engineering" {
+    :MACD Calculation;
+    :Bollinger Bands;
+    :RSI (30-day);
+    :CCI (30-day);
+    :DX (30-day);
+    :SMA (30/60-day);
+}
+
+:Train/Test Split;
+
+fork
+    :Training Data\n(2015-2019);
+    :Training Environment;
+    partition "Training Loop" {
+        repeat
+            :Get State (16D);
+            :Agent Action (0|1);
+            :Environment Step;
+            :Calculate Reward;
+            :Update State;
+        repeat while (Episode continues?)
+        
+        :Episode Terminal;
+        :Calculate Final Reward;
+        :Reset Environment;
+    }
+    :Trained Models;
+
+fork again
+    :Trading Data\n(2019-2020);
+    :Trading Environment;
+    partition "Evaluation Loop" {
+        repeat
+            :Get State (16D);
+            :Model Prediction (0|1);
+            :Execute Trade;
+            :Record Performance;
+            :Update Portfolio;
+        repeat while (Trading period continues?)
+        
+        :Final Portfolio Value;
+        :Performance Metrics;
+    }
+    
+end fork
+
+:Performance Comparison;
+:Visualization & Results;
+
+stop
+
+note bottom
+  Key Data Transformations:
+  1. Raw Price → Technical Indicators
+  2. Market Data → State Vector (16D)
+  3. Actions → Portfolio Changes
+  4. Portfolio Changes → Rewards
+  5. Rewards → Model Updates (Training)
+  6. Model → Trading Decisions (Evaluation)
+end note
+
+@enduml
+
+@startuml Reward System Design
+!allowmixing
+
+title Reward System Architecture
+
+package "Reward Calculation System" {
+    
+    interface IRewardCalculator {
+        +calculate_reward(prev_value, current_value): float
+        +calculate_final_reward(): float
+    }
+    
+    class InformationRatioReward {
+        +strategy_returns: list
+        +benchmark_returns: list
+        +tracking_errors: list
+        --
+        +calculate_reward(): float
+        +_get_excess_return(): float
+        +_get_tracking_error(): float
+    }
+    
+    class MultiFactorReward {
+        +return_weight: float
+        +risk_penalty_weight: float
+        +trade_quality_weight: float
+        --
+        +calculate_reward(): float
+        +_calculate_return_reward(): float
+        +_calculate_risk_penalty(): float
+    }
+    
+    class TradeQualityReward {
+        +trade_start_value: float
+        +trade_start_day: int
+        +trade_returns: list
+        --
+        +calculate_trade_reward(): float
+        +_evaluate_trade_quality(): float
+    }
+    
+    class FinalRewardCalculator {
+        +final_reward_weight: float
+        +daily_returns: list
+        +benchmark_returns: list
+        --
+        +calculate_final_reward(): float
+        +_calculate_excess_return(): float
+        +_calculate_sharpe_bonus(): float
+        +_calculate_trade_efficiency(): float
+    }
+}
+
+IRewardCalculator <|-- InformationRatioReward
+IRewardCalculator <|-- MultiFactorReward
+
+package "Reward Flow" {
+    start
+    :Market Action Executed;
+    
+    if (Reward Method?) then (Information Ratio)
+        :Calculate Strategy Return;
+        :Calculate Benchmark Return;
+        :Calculate Excess Return;
+        :Calculate Tracking Error;
+        :IR = Excess Return / Tracking Error;
+        :Base Reward = IR * 0.01;
+    else (Multi-Factor)
+        :Calculate Return Component;
+        :Calculate Risk Penalty;
+        :Combine Components;
+    endif
+    
+    :Add Trade Quality Reward;
+    
+    if (Episode Terminal?) then (Yes)
+        :Calculate Final Reward;
+        :Add to Last Step Reward;
+    else (No)
+        :Return Immediate Reward;
+    endif
+    
+    stop
+}
+
+note top of InformationRatioReward
+  基于信息比率的奖励方法
+  - 衡量策略相对基准的超额收益
+  - 考虑跟踪误差（风险调整）
+  - 适合相对收益策略
+end note
+
+note top of MultiFactorReward
+  多因子奖励方法
+  - 直接优化收益率
+  - 独立的风险惩罚机制
+  - 可配置的权重系统
+end note
+
+note bottom of FinalRewardCalculator
+  终极奖励在episode结束时计算
+  - 基于整个交易周期的表现
+  - 包含夏普比率、胜率等指标
+  - 数值尺度与即时奖励统一
+end note
+
+@enduml
+
+@startuml System State Management
+!allowmixing
+
+title State Space and Risk Management
+
+package "State Management System" {
+    
+    class StateManager {
+        +state_dim: int = 16
+        +lagged_risk_indicators: list[4]
+        --
+        +_initiate_state(): list[16]
+        +_update_state(): list[16]
+        +_update_lagged_risk_indicators(): void
+    }
+    
+    class RiskManager {
+        +max_drawdown: float
+        +current_drawdown: float
+        +peak_value: float
+        +daily_returns: list
+        +trade_returns: list
+        --
+        +_calculate_risk_indicators(): tuple[4]
+        +_update_peak_value(): void
+        +_calculate_drawdown(): void
+        +_calculate_volatility(): float
+        +_calculate_sharpe(): float
+    }
+    
+    class PositionManager {
+        +position: int {0|1}
+        +cash: float
+        +stock_num: float
+        +trades: int
+        +cost: float
+        --
+        +_go_long(): void
+        +_go_neutral(): void
+        +_get_total_asset(): float
+    }
+}
+
+package "State Vector (16D)" {
+    rectangle "Component 1: Basic Portfolio Info" {
+        rectangle "Index 0-3" {
+            rectangle "0: 现金余额"
+            rectangle "1: 股票价格"
+            rectangle "2: 持仓状态 0|1"
+            rectangle "3: 股票数量"
+        }
+    }
+    
+    rectangle "Component 2: Technical Indicators" {
+        rectangle "Index 4-11" {
+            rectangle "4: MACD"
+            rectangle "5: 布林带上轨"
+            rectangle "6: 布林带下轨"
+            rectangle "7: RSI_30"
+            rectangle "8: CCI_30"
+            rectangle "9: DX_30"
+            rectangle "10: SMA_30"
+            rectangle "11: SMA_60"
+        }
+    }
+    
+    rectangle "Component 3: Lagged Risk Indicators" {
+        rectangle "Index 12-15" {
+            rectangle "12: 最大回撤"
+            rectangle "13: 当前回撤"
+            rectangle "14: 波动率"
+            rectangle "15: 夏普比率"
+        }
+    }
+}
+
+note right of StateManager
+  解决Shift问题：
+  - 使用延迟的风控指标
+  - 避免未来信息泄露
+  - 保证时间序列一致性
+end note
+
+note right of RiskManager
+  实时风控监控：
+  - 动态回撤计算
+  - 滚动风险指标
+  - 历史峰值追踪
+end note
+
+note right of PositionManager
+  交易执行逻辑：
+  - 满仓/空仓二元决策
+  - 交易成本计算
+  - 资产价值更新
+end note
+
+StateManager --> "State Vector (16D)"
+RiskManager --> StateManager
+PositionManager --> StateManager
+
+@enduml
+
+@startuml Model Training and Evaluation Workflow
+!allowmixing
+
+title Model Training and Evaluation Workflow
+
+actor User as user
+participant "Main Program" as main
+participant "DataProcessor" as dp
+participant "SignalTradingEnv" as env
+participant "DRLAgent" as agent
+participant "RL Models" as models
+participant "ModelEvaluator" as eval
+database "Results" as results
+
+user -> main: Start signal_trading_main.py
+
+activate main
+main -> dp: download_data(ticker_list)
+activate dp
+dp -> dp: clean_data()
+dp -> dp: add_technical_indicator()
+dp --> main: processed_data
+deactivate dp
+
+main -> main: split train/trade data
+
+loop for each model (PPO, A2C, DQN)
+    main -> env: create training environment
+    activate env
+    
+    main -> agent: create agent(env)
+    activate agent
+    
+    agent -> models: get_model(model_name, config)
+    activate models
+    models --> agent: untrained_model
+    
+    agent -> models: train_model(timesteps=50000)
+    models -> env: step interactions
+    env -> env: calculate rewards
+    env --> models: (state, reward, done, info)
+    models --> agent: trained_model
+    deactivate models
+    
+    agent --> main: trained_model
+    deactivate agent
+    deactivate env
+end
+
+main -> main: save all trained models
+
+loop for each trained model
+    main -> eval: evaluate_model(model, trade_data)
+    activate eval
+    
+    eval -> env: create trading environment  
+    activate env
+    
+    eval -> agent: DRL_prediction(model, env)
+    activate agent
+    
+    loop trading period
+        agent -> env: predict action
+        env -> env: execute trade
+        env -> env: update portfolio
+        env --> agent: new state
+    end
+    
+    agent --> eval: (account_value, actions)
+    deactivate agent
+    deactivate env
+    
+    eval -> eval: calculate_performance_metrics()
+    eval --> main: performance_stats
+    deactivate eval
+end
+
+main -> main: compare_with_benchmark()
+main -> main: generate_visualizations()
+main -> results: save results
+main --> user: completed with results
+
+deactivate main
+
+note over main
+  Key Performance Metrics:
+  - Total Return
+  - Sharpe Ratio  
+  - Max Drawdown
+  - Volatility
+  - Trade Count
+  - Win Rate
+end note
+
+note over env
+  Environment Features:
+  - Discrete action space {0,1}
+  - 16D state space
+  - Multi-factor reward system
+  - Real-time risk monitoring
+end note
+
+@enduml 

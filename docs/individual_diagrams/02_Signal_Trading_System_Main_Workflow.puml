@@ -1,0 +1,88 @@
+@startuml
+ Signal Trading System - Main Workflow
+!allowmixing
+
+title Signal Trading System - Main Workflow
+
+start
+
+:Load Configuration;
+note right
+  - reward_config
+  - model_config  
+  - env_kwargs
+end note
+
+:Data Preparation;
+partition "Data Processing" {
+    :Download Stock Data\n(Tushare API);
+    :Clean & Fill Missing Data;
+    :Add Technical Indicators\n(MACD, RSI, Bollinger, etc.);
+    :Split Train/Trade Data;
+}
+
+:Create Training Environment;
+note right
+  SignalTradingEnv with:
+  - Action: Discrete(2)
+  - State: 16-dimensional
+  - Reward: Multi-factor
+end note
+
+partition "Model Training" {
+    fork
+        :Train PPO Model;
+    fork again
+        :Train A2C Model;
+    fork again
+        :Train DQN Model;
+    end fork
+    
+    :Save Trained Models;
+}
+
+partition "Model Evaluation" {
+    :Create Trading Environment;
+    
+    fork
+        :Evaluate PPO;
+    fork again
+        :Evaluate A2C;
+    fork again
+        :Evaluate DQN;
+    end fork
+    
+    :Calculate Performance Metrics;
+    note left
+      - Total Return
+      - Sharpe Ratio
+      - Max Drawdown
+      - Volatility
+      - Trade Count
+    end note
+}
+
+:Compare with Benchmark\n(Buy & Hold);
+
+:Generate Visualizations;
+note right
+  - Performance comparison
+  - Portfolio curves
+  - Action distributions
+  - Risk metrics
+end note
+
+:Save Results;
+partition "Output" {
+    :Model Files (.zip);
+    :Performance CSV;
+    :Account Value CSV;
+    :Actions CSV;
+    :Visualization PNG;
+    :Final Results (JSON/Pickle);
+}
+
+stop
+
+@enduml
+

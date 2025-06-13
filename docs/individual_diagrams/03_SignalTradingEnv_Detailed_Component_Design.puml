@@ -1,0 +1,123 @@
+@startuml
+ SignalTradingEnv - Detailed Design
+!allowmixing
+
+title SignalTradingEnv - Detailed Component Design
+
+class SignalTradingEnv {
+    .. Core Properties ..
+    +action_space: Discrete(2)
+    +observation_space: Box(16,)
+    +state_dim: int = 16
+    +reward_config: dict
+    
+    .. State Variables ..
+    +state: list[16]
+    +position: int {0|1}
+    +immediate_reward: float
+    +trades: int
+    +cost: float
+    
+    .. Memory & Tracking ..
+    +portfolio_memory: list
+    +actions_memory: list
+    +daily_returns: list
+    +trade_returns: list
+    +benchmark_returns: list
+    
+    .. Risk Indicators ..
+    +max_drawdown: float
+    +current_drawdown: float
+    +peak_value: float
+    +lagged_risk_indicators: list[4]
+    
+    .. Core Methods ..
+    +step(action): tuple
+    +reset(): state
+    +_calculate_reward(): float
+    +_calculate_final_reward(): float
+    
+    .. Action Methods ..
+    +_go_long(): void
+    +_go_neutral(): void
+    
+    .. State Methods ..
+    +_initiate_state(): list
+    +_update_state(): list
+    +_update_lagged_risk_indicators(): void
+    
+    .. Reward Methods ..
+    +_calculate_information_ratio_reward(): float
+    +_calculate_multi_factor_reward(): float
+    +_calculate_trade_quality_reward(): float
+    
+    .. Risk Methods ..
+    +_calculate_risk_indicators(): tuple
+    +_get_benchmark_return(): float
+    
+    .. Utility Methods ..
+    +_get_total_asset(): float
+    +_get_current_price(): float
+    +_get_date(): str
+    +get_portfolio_df(): DataFrame
+}
+
+package "State Space (16D)" {
+    rectangle "Basic Info (4D)" {
+        rectangle "现金余额"
+        rectangle "股票价格" 
+        rectangle "持仓状态"
+        rectangle "股票数量"
+    }
+    
+    rectangle "Technical Indicators (8D)" {
+        rectangle "MACD"
+        rectangle "布林带上轨"
+        rectangle "布林带下轨"
+        rectangle "RSI_30"
+        rectangle "CCI_30"
+        rectangle "DX_30"
+        rectangle "SMA_30"
+        rectangle "SMA_60"
+    }
+    
+    rectangle "Risk Indicators (4D)" {
+        rectangle "最大回撤"
+        rectangle "当前回撤"
+        rectangle "波动率"
+        rectangle "夏普比率"
+    }
+}
+
+package "Action Space" {
+    rectangle "Discrete(2)" {
+        rectangle "0: 无持仓/卖出"
+        rectangle "1: 多头持有/买入"
+    }
+}
+
+package "Reward Components" {
+    rectangle "Information Ratio Method" {
+        rectangle "超额收益 / 跟踪误差"
+        rectangle "基准: Buy & Hold"
+    }
+    
+    rectangle "Multi-Factor Method" {
+        rectangle "收益率奖励"
+        rectangle "风险惩罚"
+        rectangle "交易质量"
+    }
+    
+    rectangle "Final Reward" {
+        rectangle "策略vs基准超额收益"
+        rectangle "夏普比率奖励"
+        rectangle "交易效率奖励"
+    }
+}
+
+SignalTradingEnv --> "State Space (16D)"
+SignalTradingEnv --> "Action Space"
+SignalTradingEnv --> "Reward Components"
+
+@enduml
+

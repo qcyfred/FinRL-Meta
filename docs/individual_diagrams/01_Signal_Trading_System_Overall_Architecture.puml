@@ -1,0 +1,114 @@
+@startuml
+ Signal Trading System - Overall Architecture
+!allowmixing
+
+title Signal Trading System - Overall Architecture
+
+package "Data Layer" {
+    class DataProcessor {
+        +download_data()
+        +clean_data()
+        +add_technical_indicator()
+        +data_split()
+    }
+    
+    class TushareAPI {
+        +get_stock_data()
+        +real_time_data()
+    }
+    
+    database "Raw Data" as RawData
+    database "Processed Data" as ProcessedData
+}
+
+package "Environment Layer" {
+    class SignalTradingEnv {
+        +state_space: Box(16,)
+        +action_space: Discrete(2)
+        +step()
+        +reset()
+        +_calculate_reward()
+        +_go_long()
+        +_go_neutral()
+    }
+    
+    package "Reward System" {
+        class InformationRatioReward
+        class MultiFactorReward
+        class FinalReward
+    }
+    
+    package "Risk Management" {
+        class RiskIndicators {
+            +max_drawdown
+            +current_drawdown
+            +volatility
+            +sharpe_ratio
+        }
+    }
+}
+
+package "Agent Layer" {
+    class DRLAgent {
+        +get_model()
+        +train_model()
+        +DRL_prediction()
+    }
+    
+    package "RL Models" {
+        class PPO
+        class A2C
+        class DQN
+    }
+}
+
+package "Evaluation Layer" {
+    class ModelEvaluator {
+        +evaluate_model()
+        +performance_comparison()
+        +benchmark_comparison()
+    }
+    
+    class Visualizer {
+        +plot_comparison()
+        +save_results()
+    }
+}
+
+package "Configuration" {
+    class RewardConfig {
+        +method: str
+        +weights: dict
+        +benchmark: str
+    }
+    
+    class ModelConfig {
+        +hyperparameters
+        +training_steps
+    }
+}
+
+' Relationships
+DataProcessor --> ProcessedData
+TushareAPI --> RawData
+RawData --> DataProcessor
+ProcessedData --> SignalTradingEnv
+
+SignalTradingEnv --> InformationRatioReward
+SignalTradingEnv --> MultiFactorReward
+SignalTradingEnv --> FinalReward
+SignalTradingEnv --> RiskIndicators
+
+DRLAgent --> SignalTradingEnv
+DRLAgent --> PPO
+DRLAgent --> A2C
+DRLAgent --> DQN
+
+ModelEvaluator --> DRLAgent
+Visualizer --> ModelEvaluator
+
+RewardConfig --> SignalTradingEnv
+ModelConfig --> DRLAgent
+
+@enduml
+

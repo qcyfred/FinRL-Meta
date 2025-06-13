@@ -113,6 +113,25 @@ print(f"股票数量: {len(train.tic.unique())}")
 # 环境设置
 # ================================
 
+# 改进的奖励配置
+reward_config_balanced = {
+    'method': 'information_ratio',  # 使用信息比率方法
+    'return_weight': 1.0,
+    'risk_penalty_weight': 0.5,
+    'trade_quality_weight': 0.1,
+    'final_reward_weight': 2.0,
+    'benchmark': 'buy_hold'
+}
+
+reward_config_multi_factor = {
+    'method': 'multi_factor',  # 使用多因子方法
+    'return_weight': 1.0,
+    'risk_penalty_weight': 0.8,
+    'trade_quality_weight': 0.15,
+    'final_reward_weight': 1.5,
+    'benchmark': 'buy_hold'
+}
+
 # 交易环境参数
 env_kwargs = {
     "initial_amount": 1000000,
@@ -122,7 +141,7 @@ env_kwargs = {
     "turbulence_threshold": None,
     "make_plots": True,
     "print_verbosity": 10,
-    "reward_weights": REWARD_WEIGHTS,
+    "reward_config": reward_config_balanced,  # 使用新的reward_config
     "random_seed": 42,
 }
 
