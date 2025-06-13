@@ -145,3 +145,5 @@ price_array.npy
 
 # vscode
 /.vscode
+
+*.png
