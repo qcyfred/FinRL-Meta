@@ -64,11 +64,13 @@ class DataProcessor:
             from meta.data_processors.quantconnect import Quantconnect
 
             processor_dict = {self.data_source: Quantconnect}
-        elif self.data_source == DataSource.ricequant:
+        
+        # 不能直接相等了?
+        elif self.data_source == DataSource.ricequant.value:
             from meta.data_processors.ricequant import Ricequant
 
             processor_dict = {self.data_source: Ricequant}
-        elif self.data_source == DataSource.tushare:
+        elif self.data_source == DataSource.tushare.value:
             from meta.data_processors.tushare import Tushare
 
             processor_dict = {self.data_source: Tushare}

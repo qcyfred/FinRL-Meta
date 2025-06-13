@@ -206,7 +206,9 @@ class ReturnPlotter:
             # 均等权重
             all_date = self.trade.time.unique().tolist()
             baseline = []
-            for day in all_date:
+            # qcy修改，这里日期对不上？
+            # for day in all_date:
+            for day in all_date[:-1]:
                 day_close = self.trade[self.trade["time"] == day].close.tolist()
                 avg_close = sum(day_close) / len(day_close)
                 baseline.append(avg_close)
@@ -219,6 +221,9 @@ class ReturnPlotter:
             60  # you should scale this variable accroding to the total trading days
         )
         time = list(range(len(ours)))
+        
+        # qcy修改，这里有点怪！
+        self.df_account_value['time'] = pd.to_datetime(self.df_account_value['date'], format="%Y-%m-%d")
         datetimes = self.df_account_value.time.tolist()
         ticks = [tick for t, tick in zip(time, datetimes) if t % days_per_tick == 0]
         plt.title("Cumulative Returns")
