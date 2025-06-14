@@ -13,7 +13,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 class SignalTradingEnv(gym.Env):
     """A single stock signal trading environment for OpenAI gym with discrete actions
     
-    优化版本：解决了奖励机制、状态空间shift问题、命名混乱等问题
+    5分钟频率版本：专门为高频数据优化的信号交易环境，简化版本
     """
 
     metadata = {"render.modes": ["human"]}
@@ -28,17 +28,18 @@ class SignalTradingEnv(gym.Env):
         turbulence_threshold=None,
         make_plots=False,
         print_verbosity=2,
-        day=0,
+        step=0,  # 改名为step，更适合5分钟频率
         initial=True,
         previous_state=[],
         model_name="",
         mode="",
         iteration="",
         random_seed=None,
-        reward_config=None,  # 改进的奖励配置
+        reward_config=None,
+        frequency="5min",  # 新增：数据频率参数
     ):
         # 基本参数
-        self.day = day
+        self.step_idx = step  # 当前步骤索引
         self.df = df
         self.initial_amount = initial_amount
         self.buy_cost_pct = buy_cost_pct
@@ -52,33 +53,33 @@ class SignalTradingEnv(gym.Env):
         self.model_name = model_name
         self.mode = mode
         self.iteration = iteration
+        self.frequency = frequency
 
-        # 改进的奖励配置
+        # 5分钟频率相关参数
+        self.freq_params = self._get_frequency_params(frequency)
+        
+        # 简化的奖励配置
         self.reward_config = reward_config or {
-            'method': 'information_ratio',  # 'multi_factor' or 'information_ratio'
+            'method': 'simple',  # 简化方法
             'return_weight': 1.0,
-            'risk_penalty_weight': 0.5,
-            'trade_quality_weight': 0.1,
-            'final_reward_weight': 2.0,
-            'benchmark': 'buy_hold'  # 基准策略
         }
 
         # 动作空间: 0=无持仓(卖出), 1=多头持有(买入)
         self.action_space = spaces.Discrete(2)
         
-        # 状态空间计算 - 解决shift问题，使用延迟的风控指标
-        # [现金, 股价, 持仓状态(0/1), 股票数量, 技术指标..., 延迟风控指标...]
-        self.state_dim = 4 + len(self.tech_indicator_list) + 4  # +4 for lagged risk indicators
+        # 状态空间计算 - 保持16维
+        # [现金, 股价, 持仓状态(0/1), 股票数量, 技术指标..., 简化风控指标...]
+        self.state_dim = 4 + len(self.tech_indicator_list) + 4  # +4 for simplified risk indicators
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(self.state_dim,)
         )
 
         # 初始化数据
-        self.data = self.df.loc[self.day, :]
+        self.data = self.df.loc[self.step_idx, :]
         self.terminal = False
 
         # 初始化交易变量
-        self.immediate_reward = 0.0  # 明确命名：即时RL奖励
+        self.immediate_reward = 0.0
         self.turbulence = 0
         self.cost = 0
         self.trades = 0
@@ -93,26 +94,49 @@ class SignalTradingEnv(gym.Env):
         self.date_memory = [self._get_date()]
         self.asset_memory = []
         
-        # 风控指标 - 分为当前和延迟两套
+        # 简化的风控指标
         self.max_drawdown = 0.0
         self.current_drawdown = 0.0
         self.peak_value = self.initial_amount
-        self.trade_returns = []  # 每笔交易的收益率
-        self.daily_returns = []
+        self.period_returns = []
         
-        # 延迟风控指标（用于状态空间，避免shift问题）- 必须在_initiate_state之前初始化
-        self.lagged_risk_indicators = [0.0, 0.0, 0.0, 0.0]
+        # 简化的风控指标（用于状态空间）
+        self.simple_risk_indicators = [0.0, 0.0, 0.0, 0.0]
         
         # 交易记录
         self.trade_start_value = None
-        self.trade_start_day = None
+        self.trade_start_step = None
         
-        # 基准收益率记录（用于信息比率计算）
-        self.benchmark_returns = []
-        self.tracking_errors = []
+        # 高频交易相关
+        self.consecutive_holds = 0
+        self.last_trade_step = 0
 
-        # 初始化状态 - 放在所有属性初始化之后
+        # 初始化状态
         self.state = self._initiate_state()
+
+    def _get_frequency_params(self, frequency):
+        """根据数据频率设置相关参数"""
+        if frequency == "5min":
+            return {
+                'periods_per_day': 78,  # 9:30-15:00，去除午休，每天78个5分钟
+                'periods_per_year': 78 * 252,  # 年化基数
+                'min_hold_periods': 6,         # 最小持仓周期（30分钟）
+                'max_trade_freq': 0.1,         # 最大交易频率
+            }
+        elif frequency == "1min":
+            return {
+                'periods_per_day': 240,
+                'periods_per_year': 240 * 252,
+                'min_hold_periods': 30,
+                'max_trade_freq': 0.05,
+            }
+        else:  # 默认日频
+            return {
+                'periods_per_day': 1,
+                'periods_per_year': 252,
+                'min_hold_periods': 1,
+                'max_trade_freq': 1.0,
+            }
 
     def _get_current_price(self):
         """获取当前股价"""
@@ -120,249 +144,81 @@ class SignalTradingEnv(gym.Env):
 
     def _get_total_asset(self):
         """获取当前总资产"""
-        return self.state[0] + self.state[3] * self.state[1]  # 现金 + 股票数量 * 股价
+        return self.state[0] + self.state[3] * self.state[1]
 
-    def _calculate_risk_indicators(self):
-        """计算当前风控指标"""
-        current_value = self._get_total_asset()
-        
-        # 更新峰值
-        if current_value > self.peak_value:
-            self.peak_value = current_value
-            self.current_drawdown = 0.0
-        else:
-            self.current_drawdown = (self.peak_value - current_value) / self.peak_value
-            
-        # 更新最大回撤
-        self.max_drawdown = max(self.max_drawdown, self.current_drawdown)
-        
-        # 计算波动率（基于最近20天的日收益率）
-        if len(self.daily_returns) > 1:
-            recent_returns = self.daily_returns[-20:] if len(self.daily_returns) >= 20 else self.daily_returns
-            volatility = np.std(recent_returns) * np.sqrt(252)  # 年化波动率
-        else:
-            volatility = 0.0
-            
-        # 计算夏普比率（基于最近收益率）
-        if len(self.daily_returns) > 1 and np.std(self.daily_returns) > 0:
-            sharpe = np.mean(self.daily_returns) / np.std(self.daily_returns) * np.sqrt(252)
-        else:
-            sharpe = 0.0
-            
-        return self.max_drawdown, self.current_drawdown, volatility, sharpe
+    def _calculate_simple_risk_indicators(self):
+        """计算简化的风控指标 - 返回常数"""
+        # 简化版本，只返回常数
+        return 0.0, 0.0, 0.0, 0.0  # max_drawdown, current_drawdown, volatility, sharpe_ratio
 
-    def _get_benchmark_return(self):
-        """计算基准收益率（买入持有策略）"""
-        if self.day > 0:
-            prev_price = self.df.loc[self.day - 1, 'close']
-            current_price = self.data.close
-            return (current_price - prev_price) / prev_price
-        return 0.0
-
-    def _calculate_information_ratio_reward(self, prev_value, current_value):
-        """基于信息比率的奖励计算 - 解决指标可加性问题"""
-        # 计算策略收益率
-        if prev_value > 0:
-            strategy_return = (current_value - prev_value) / prev_value
-        else:
-            strategy_return = 0.0
-            
-        self.daily_returns.append(strategy_return)
-        
-        # 计算基准收益率
-        benchmark_return = self._get_benchmark_return()
-        self.benchmark_returns.append(benchmark_return)
-        
-        # 计算超额收益
-        excess_return = strategy_return - benchmark_return
-        
-        # 计算跟踪误差（超额收益的标准差）
-        if len(self.daily_returns) > 2:
-            excess_returns = np.array(self.daily_returns) - np.array(self.benchmark_returns)
-            tracking_error = np.std(excess_returns[-20:])  # 使用最近20天的数据
-            self.tracking_errors.append(tracking_error)
-        else:
-            tracking_error = 0.1  # 默认值
-            
-        # 计算信息比率 (IR = 超额收益 / 跟踪误差)
-        if tracking_error > 1e-6:
-            information_ratio = excess_return / tracking_error
-        else:
-            information_ratio = excess_return / 0.01  # 避免除零
-            
-        # 将IR转换为合适的奖励尺度
-        base_reward = information_ratio * 0.01
-        
-        return base_reward
-
-    def _calculate_multi_factor_reward(self, prev_value, current_value):
-        """改进的多因子奖励计算 - 分层设计"""
-        # 1. 基础收益奖励
+    def _calculate_simple_reward(self, prev_value, current_value):
+        """简化的奖励计算"""
         if prev_value > 0:
             return_rate = (current_value - prev_value) / prev_value
         else:
             return_rate = 0.0
             
-        self.daily_returns.append(return_rate)
+        self.period_returns.append(return_rate)
         
-        # 基础收益奖励（主要组件）
-        return_reward = self.reward_config['return_weight'] * return_rate
+        # 简化奖励：只基于收益率，放大适应5分钟频率
+        reward = self.reward_config['return_weight'] * return_rate * 100
         
-        # 2. 风险惩罚（独立计算，避免可加性问题）
-        risk_penalty = 0.0
-        if len(self.daily_returns) > 5:  # 至少需要一些历史数据
-            recent_returns = self.daily_returns[-10:]
-            volatility = np.std(recent_returns)
-            
-            # 超额波动率惩罚
-            if volatility > 0.02:  # 日波动率超过2%
-                risk_penalty -= self.reward_config['risk_penalty_weight'] * (volatility - 0.02)
-                
-            # 连续亏损惩罚
-            if len([r for r in recent_returns[-3:] if r < 0]) == 3:  # 连续3天亏损
-                risk_penalty -= 0.001
-        
-        return return_reward + risk_penalty
-
-    def _calculate_trade_quality_reward(self):
-        """计算交易质量奖励（仅在交易时触发）"""
-        trade_reward = 0.0
-        
-        # 交易成本惩罚
+        # 基本交易成本惩罚
         if hasattr(self, 'prev_position') and self.prev_position != self.position:
-            trade_reward -= 0.0001  # 降低交易成本惩罚的影响
-            
-            # 完成交易的质量评估
-            if self.prev_position == 1 and self.position == 0:  # 平仓
-                if self.trade_start_value is not None:
-                    current_value = self._get_total_asset()
-                    trade_return = (current_value - self.trade_start_value) / self.trade_start_value
-                    self.trade_returns.append(trade_return)
-                    
-                    # 交易质量奖励 - 基于收益率和持有时间
-                    hold_days = self.day - self.trade_start_day if self.trade_start_day else 1
-                    if trade_return > 0:
-                        # 盈利交易奖励，考虑持有时间
-                        quality_bonus = self.reward_config['trade_quality_weight'] * trade_return
-                        if hold_days >= 5:  # 持有超过5天的盈利交易额外奖励
-                            quality_bonus *= 1.2
-                        trade_reward += quality_bonus
-                    else:
-                        # 亏损交易惩罚，但不过重
-                        trade_reward += self.reward_config['trade_quality_weight'] * trade_return * 0.5
-                        
-            # 开仓记录
-            elif self.prev_position == 0 and self.position == 1:  # 开仓
-                self.trade_start_value = self._get_total_asset()
-                self.trade_start_day = self.day
-                
-        return trade_reward
-
-    def _calculate_reward(self, prev_value, current_value):
-        """主奖励计算函数 - 整合改进的奖励机制"""
-        if self.reward_config['method'] == 'information_ratio':
-            base_reward = self._calculate_information_ratio_reward(prev_value, current_value)
-        else:  # multi_factor
-            base_reward = self._calculate_multi_factor_reward(prev_value, current_value)
-            
-        # 添加交易质量奖励
-        trade_reward = self._calculate_trade_quality_reward()
+            reward -= 0.0001  # 简单的交易成本
         
-        # 总奖励
-        total_reward = base_reward + trade_reward
-        
-        return total_reward
-
-    def _calculate_final_reward(self):
-        """计算基于整体表现的终极奖励 - 数值尺度统一"""
-        if len(self.daily_returns) == 0:
-            return 0.0
-            
-        # 1. 总收益率表现
-        total_return = (self._get_total_asset() - self.initial_amount) / self.initial_amount
-        
-        # 2. 与基准比较的超额收益
-        if len(self.benchmark_returns) > 0:
-            strategy_cumret = (1 + np.array(self.daily_returns)).prod() - 1
-            benchmark_cumret = (1 + np.array(self.benchmark_returns)).prod() - 1
-            excess_return = strategy_cumret - benchmark_cumret
-        else:
-            excess_return = total_return
-            
-        # 3. 风险调整后的终极奖励
-        if len(self.daily_returns) > 1:
-            sharpe_ratio = np.mean(self.daily_returns) / np.std(self.daily_returns) * np.sqrt(252)
-            # 夏普比率超过1.0的部分给额外奖励
-            sharpe_bonus = max(0, sharpe_ratio - 1.0) * 0.01
-        else:
-            sharpe_bonus = 0.0
-            
-        # 4. 交易效率奖励
-        if len(self.trade_returns) > 0:
-            win_rate = sum(1 for r in self.trade_returns if r > 0) / len(self.trade_returns)
-            trade_efficiency_bonus = (win_rate - 0.5) * 0.005  # 胜率超过50%的部分
-        else:
-            trade_efficiency_bonus = 0.0
-            
-        # 计算终极奖励 - 统一数值尺度到即时奖励的量级
-        final_reward = self.reward_config['final_reward_weight'] * (
-            excess_return * 0.1 +     # 超额收益奖励
-            sharpe_bonus +            # 夏普比率奖励
-            trade_efficiency_bonus    # 交易效率奖励
-        )
-        
-        return final_reward
+        return reward
 
     def step(self, action):
-        self.terminal = self.day >= len(self.df.index.unique()) - 1
+        self.terminal = self.step_idx >= len(self.df.index.unique()) - 1
         
         if self.terminal:
-            print(f"Episode: {self.episode}")
+            if self.print_verbosity > 0:
+                print(f"Episode: {self.episode}")
             if self.make_plots:
                 self._make_plot()
 
-            # 计算最终统计 - 修正命名混乱
+            # 计算最终统计
             begin_total_asset = self.initial_amount
             end_total_asset = self._get_total_asset()
-            total_pnl = end_total_asset - begin_total_asset  # 正确命名：P&L金额
-            total_return = total_pnl / begin_total_asset      # 总收益率
+            total_pnl = end_total_asset - begin_total_asset
+            total_return = total_pnl / begin_total_asset
 
-            # 计算最终风控指标
-            if len(self.daily_returns) > 1:
-                sharpe_final = np.mean(self.daily_returns) / np.std(self.daily_returns) * np.sqrt(252)
-                volatility_final = np.std(self.daily_returns) * np.sqrt(252)
-            else:
-                sharpe_final = 0.0
-                volatility_final = 0.0
+            # 简化的最终风控指标
+            sharpe_final = 0.0
+            volatility_final = 0.0
+            if len(self.period_returns) > 1:
+                annual_factor = self.freq_params['periods_per_year']
+                mean_return = np.mean(self.period_returns)
+                std_return = np.std(self.period_returns)
+                if std_return > 0:
+                    sharpe_final = mean_return / std_return * np.sqrt(annual_factor)
+                volatility_final = std_return * np.sqrt(annual_factor)
 
-            # 计算终极奖励并加到最后一步
-            final_reward = self._calculate_final_reward()
-            total_step_reward = self.immediate_reward + final_reward
+            # 交易频率统计
+            total_periods = len(self.period_returns)
+            trade_frequency = self.trades / total_periods if total_periods > 0 else 0
 
             if self.print_verbosity > 0 and self.episode % self.print_verbosity == 0:
-                print(f"=== Episode {self.episode} Results ===")
+                print(f"=== Episode {self.episode} Results (5-min frequency) ===")
                 print(f"Total Return: {total_return:.4f}")
-                print(f"Total P&L: {total_pnl:.2f}")  # 修正命名
-                print(f"Final RL Reward: {final_reward:.4f}")  # 新增：终极RL奖励
+                print(f"Total P&L: {total_pnl:.2f}")
                 print(f"Max Drawdown: {self.max_drawdown:.4f}")
                 print(f"Sharpe Ratio: {sharpe_final:.4f}")
                 print(f"Volatility: {volatility_final:.4f}")
                 print(f"Total Trades: {self.trades}")
-                print(f"Profitable Trades: {sum(1 for r in self.trade_returns if r > 0)}/{len(self.trade_returns)}")
-                if len(self.benchmark_returns) > 0:
-                    benchmark_total = (1 + np.array(self.benchmark_returns)).prod() - 1
-                    print(f"Benchmark Return: {benchmark_total:.4f}")
-                    print(f"Excess Return: {(total_return - benchmark_total):.4f}")
-                print("=================================")
+                print(f"Trade Frequency: {trade_frequency:.4f}")
+                print("=" * 50)
 
-            return self.state, total_step_reward, self.terminal, {
+            return self.state, self.immediate_reward, self.terminal, {
                 'total_return': total_return,
                 'total_pnl': total_pnl,
-                'final_rl_reward': final_reward,
                 'max_drawdown': self.max_drawdown,
                 'sharpe': sharpe_final,
                 'volatility': volatility_final,
-                'total_trades': self.trades
+                'total_trades': self.trades,
+                'trade_frequency': trade_frequency,
+                'data_frequency': self.frequency,
             }
 
         # 记录前一状态
@@ -377,16 +233,16 @@ class SignalTradingEnv(gym.Env):
 
         # 计算即时奖励
         current_value = self._get_total_asset()
-        self.immediate_reward = self._calculate_reward(prev_value, current_value)
+        self.immediate_reward = self._calculate_simple_reward(prev_value, current_value)
 
-        # 更新延迟风控指标（用于下一步的状态空间）
-        self._update_lagged_risk_indicators()
+        # 更新简化风控指标
+        self._update_simple_risk_indicators()
 
         # 更新turbulence
         if self.turbulence_threshold is not None:
             self.turbulence = self.data.get("turbulence", 0)
 
-        # 记录
+        # 记录 - 包含时间戳信息
         self.actions_memory.append(action)
         date = self._get_date()
         
@@ -397,42 +253,54 @@ class SignalTradingEnv(gym.Env):
             "position": self.position,
             "stock_num": self.state[3],
             "price": self.state[1],
-            "immediate_reward": self.immediate_reward,  # 记录即时奖励
+            "immediate_reward": self.immediate_reward,
             "action": action,
+            "step_idx": self.step_idx,  # 5分钟频率特有
         })
         self.date_memory.append(date)
 
         # 更新下一个状态
-        self.day += 1
-        self.data = self.df.loc[self.day, :]
+        self.step_idx += 1
+        self.data = self.df.loc[self.step_idx, :]
         self.state = self._update_state()
 
         return self.state, self.immediate_reward, self.terminal, {}
 
-    def _update_lagged_risk_indicators(self):
-        """更新延迟风控指标 - 解决shift问题"""
-        # 使用当前计算的风控指标作为下一步的延迟指标
-        current_risk = self._calculate_risk_indicators()
-        self.lagged_risk_indicators = list(current_risk)
+    def _update_simple_risk_indicators(self):
+        """更新简化风控指标"""
+        # 简化版本，只计算基本的回撤
+        current_value = self._get_total_asset()
+        if current_value > self.peak_value:
+            self.peak_value = current_value
+            self.current_drawdown = 0.0
+        else:
+            self.current_drawdown = (self.peak_value - current_value) / self.peak_value
+        self.max_drawdown = max(self.max_drawdown, self.current_drawdown)
+        
+        # 简化的风控指标
+        self.simple_risk_indicators = [
+            self.max_drawdown, 
+            self.current_drawdown, 
+            0.0,  # 简化的波动率
+            0.0   # 简化的夏普比率
+        ]
 
     def _go_long(self):
         """执行多头操作：满仓买入"""
         current_price = self._get_current_price()
         
-        if current_price > 0 and self.position == 0:  # 只有在无持仓时才买入
-            # 计算可买入股数
+        if current_price > 0 and self.position == 0:
             available_cash = self.state[0]
             cost_rate = 1 + self.buy_cost_pct
             max_shares = int(available_cash / (current_price * cost_rate))
             
             if max_shares > 0:
-                # 执行买入
                 buy_amount = max_shares * current_price
                 cost = buy_amount * self.buy_cost_pct
                 
-                self.state[0] -= (buy_amount + cost)  # 减少现金
-                self.state[3] = max_shares  # 设置股票数量
-                self.position = 1  # 更新持仓状态
+                self.state[0] -= (buy_amount + cost)
+                self.state[3] = max_shares
+                self.position = 1
                 
                 self.cost += cost
                 self.trades += 1
@@ -442,21 +310,20 @@ class SignalTradingEnv(gym.Env):
         current_price = self._get_current_price()
         
         if current_price > 0 and self.position == 1 and self.state[3] > 0:
-            # 卖出所有股票
             sell_amount = self.state[3] * current_price
             cost = sell_amount * self.sell_cost_pct
             
-            self.state[0] += (sell_amount - cost)  # 增加现金
-            self.state[3] = 0  # 清空股票
-            self.position = 0  # 更新持仓状态
+            self.state[0] += (sell_amount - cost)
+            self.state[3] = 0
+            self.position = 0
             
             self.cost += cost
             self.trades += 1
 
     def reset(self):
         # 重置所有变量
-        self.day = 0
-        self.data = self.df.loc[self.day, :]
+        self.step_idx = 0
+        self.data = self.df.loc[self.step_idx, :]
         self.state = self._initiate_state()
         self.turbulence = 0
         self.cost = 0
@@ -474,55 +341,59 @@ class SignalTradingEnv(gym.Env):
         self.max_drawdown = 0.0
         self.current_drawdown = 0.0
         self.peak_value = self.initial_amount
-        self.trade_returns = []
-        self.daily_returns = []
+        self.period_returns = []
         self.trade_start_value = None
-        self.trade_start_day = None
+        self.trade_start_step = None
         
-        # 重置延迟指标和基准记录
-        self.lagged_risk_indicators = [0.0, 0.0, 0.0, 0.0]
-        self.benchmark_returns = []
-        self.tracking_errors = []
+        # 重置简化指标
+        self.simple_risk_indicators = [0.0, 0.0, 0.0, 0.0]
+        
+        # 重置高频交易相关
+        self.consecutive_holds = 0
+        self.last_trade_step = 0
 
         self.episode += 1
         return self.state
 
     def _initiate_state(self):
-        """初始化状态 - 使用延迟风控指标"""
+        """初始化状态 - 16维"""
         if self.initial:
-            # 初始状态: [现金, 股价, 持仓状态, 股票数量, 技术指标..., 延迟风控指标...]
             tech_indicators = [self.data[tech] for tech in self.tech_indicator_list]
             
-            state = [self.initial_amount, self.data.close, 0, 0] + tech_indicators + self.lagged_risk_indicators
+            state = [self.initial_amount, self.data.close, 0, 0] + tech_indicators + self.simple_risk_indicators
         else:
-            # 使用之前的状态
             tech_indicators = [self.data[tech] for tech in self.tech_indicator_list]
             
             state = [
-                self.previous_state[0],  # 现金
-                self.data.close,         # 当前股价
-                self.previous_state[2],  # 持仓状态
-                self.previous_state[3],  # 股票数量
-            ] + tech_indicators + self.lagged_risk_indicators
+                self.previous_state[0],
+                self.data.close,
+                self.previous_state[2],
+                self.previous_state[3],
+            ] + tech_indicators + self.simple_risk_indicators
             
         return state
 
     def _update_state(self):
-        """更新状态 - 使用延迟风控指标"""
+        """更新状态 - 16维"""
         tech_indicators = [self.data[tech] for tech in self.tech_indicator_list]
         
         state = [
-            self.state[0],           # 现金
-            self.data.close,         # 当前股价
-            self.position,           # 持仓状态
-            self.state[3],           # 股票数量
-        ] + tech_indicators + self.lagged_risk_indicators  # 使用延迟的风控指标
+            self.state[0],
+            self.data.close,
+            self.position,
+            self.state[3],
+        ] + tech_indicators + self.simple_risk_indicators
         
         return state
 
     def _get_date(self):
-        """获取当前日期"""
-        return self.data.time
+        """获取当前日期时间"""
+        if hasattr(self.data, 'time'):
+            return self.data.time
+        elif hasattr(self.data, 'datetime'):
+            return self.data.datetime
+        else:
+            return self.df.index[self.step_idx]
 
     def render(self, mode="human", close=False):
         return self.state
@@ -547,11 +418,17 @@ class SignalTradingEnv(gym.Env):
             return pd.DataFrame(columns=["date", "account_value"])
 
     def save_action_memory(self):
-        """保存动作记录"""
+        """保存动作记录 - 5分钟频率"""
         if len(self.date_memory) > 1 and len(self.actions_memory) > 0:
-            date_list = self.date_memory[:-1]
-            action_list = self.actions_memory
-            df_actions = pd.DataFrame({"date": date_list, "actions": action_list})
+            # 确保日期和动作数量匹配
+            min_length = min(len(self.date_memory) - 1, len(self.actions_memory))
+            date_list = self.date_memory[:min_length]
+            action_list = self.actions_memory[:min_length]
+            
+            df_actions = pd.DataFrame({
+                "date": date_list, 
+                "actions": action_list
+            })
             return df_actions
         else:
             return pd.DataFrame(columns=["date", "actions"])
@@ -566,85 +443,47 @@ class SignalTradingEnv(gym.Env):
         return e, obs
 
     def _make_plot(self):
-        """生成图表"""
+        """生成图表 - 5分钟频率优化"""
         portfolio_df = self.get_portfolio_df()
         if not portfolio_df.empty:
             plt.figure(figsize=(15, 10))
             
             # 资产曲线
-            plt.subplot(2, 3, 1)
-            plt.plot(portfolio_df["date"], portfolio_df["total_asset"], color="r", label="Portfolio Value")
-            plt.title("Portfolio Value Over Time")
-            plt.xlabel("Date")
+            plt.subplot(2, 2, 1)
+            plt.plot(portfolio_df["date"], portfolio_df["total_asset"], color="r", label="Portfolio Value", linewidth=0.8)
+            plt.title("Portfolio Value Over Time (5-min)")
+            plt.xlabel("Time")
             plt.ylabel("Asset Value")
             plt.legend()
             plt.xticks(rotation=45)
             
             # 持仓状态
-            plt.subplot(2, 3, 2)
-            plt.plot(portfolio_df["date"], portfolio_df["position"], color="b", label="Position")
+            plt.subplot(2, 2, 2)
+            plt.plot(portfolio_df["date"], portfolio_df["position"], color="b", label="Position", linewidth=0.8)
             plt.title("Position Over Time")
-            plt.xlabel("Date")
+            plt.xlabel("Time")
             plt.ylabel("Position (0=Neutral, 1=Long)")
             plt.legend()
             plt.xticks(rotation=45)
             
             # 动作分布
-            plt.subplot(2, 3, 3)
+            plt.subplot(2, 2, 3)
             action_counts = portfolio_df["action"].value_counts()
             plt.bar(action_counts.index, action_counts.values)
             plt.title("Action Distribution")
             plt.xlabel("Action (0=Sell/Hold, 1=Buy/Hold)")
             plt.ylabel("Count")
             
-            # 即时奖励分布
-            plt.subplot(2, 3, 4)
-            if "immediate_reward" in portfolio_df.columns:
-                plt.plot(portfolio_df["date"], portfolio_df["immediate_reward"], color="g", label="Immediate RL Reward")
-                plt.title("Immediate RL Rewards")
-                plt.xlabel("Date")
-                plt.ylabel("Immediate Reward")
-                plt.legend()
-                plt.xticks(rotation=45)
-            
-            # 累积收益率对比
-            plt.subplot(2, 3, 5)
+            # 累积收益率
+            plt.subplot(2, 2, 4)
             portfolio_df['strategy_cumret'] = (portfolio_df['total_asset'] / self.initial_amount - 1) * 100
-            plt.plot(portfolio_df["date"], portfolio_df['strategy_cumret'], color="r", label="Strategy")
-            
-            # 如果有基准数据，也绘制基准曲线
-            if len(self.benchmark_returns) > 0:
-                benchmark_cumret = (np.cumprod(1 + np.array(self.benchmark_returns)) - 1) * 100
-                benchmark_dates = portfolio_df["date"][:len(benchmark_cumret)]
-                plt.plot(benchmark_dates, benchmark_cumret, color="b", label="Buy & Hold")
-            
-            plt.title("Cumulative Return Comparison (%)")
-            plt.xlabel("Date")
+            plt.plot(portfolio_df["date"], portfolio_df['strategy_cumret'], color="r", label="Strategy", linewidth=1)
+            plt.title("Cumulative Return (%)")
+            plt.xlabel("Time")
             plt.ylabel("Cumulative Return (%)")
             plt.legend()
             plt.xticks(rotation=45)
             
-            # 风险指标变化
-            plt.subplot(2, 3, 6)
-            if len(self.daily_returns) > 1:
-                rolling_sharpe = []
-                for i in range(10, len(self.daily_returns)):
-                    recent_returns = self.daily_returns[i-10:i]
-                    if np.std(recent_returns) > 0:
-                        sharpe = np.mean(recent_returns) / np.std(recent_returns) * np.sqrt(252)
-                    else:
-                        sharpe = 0
-                    rolling_sharpe.append(sharpe)
-                
-                if len(rolling_sharpe) > 0:
-                    rolling_dates = portfolio_df["date"][10:10+len(rolling_sharpe)]
-                    plt.plot(rolling_dates, rolling_sharpe, color="purple", label="Rolling Sharpe")
-                    plt.title("Rolling Sharpe Ratio (10-day)")
-                    plt.xlabel("Date")
-                    plt.ylabel("Sharpe Ratio")
-                    plt.legend()
-                    plt.xticks(rotation=45)
-            
             plt.tight_layout()
-            plt.savefig(f"results/signal_trading_analysis_{self.episode}.png", dpi=150, bbox_inches='tight')
+            plt.savefig(f"results/signal_trading_5min_analysis_{self.episode}.png", dpi=150, bbox_inches='tight')
             plt.close() 
