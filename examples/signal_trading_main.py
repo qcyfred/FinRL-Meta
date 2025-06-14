@@ -104,7 +104,7 @@ print(f"数据列: {p.dataframe.columns.tolist()}")
 
 train = p.data_split(p.dataframe, TRAIN_START_DATE, TRAIN_END_DATE)
 trade = p.data_split(p.dataframe, TRADE_START_DATE, TRADE_END_DATE)
-
+# train.to_csv(rf'/Users/qinchaoyi/workspace/Ultron/code/AI4Fin/FinRL-Meta/datasets/train.csv')
 print(f"训练数据形状: {train.shape}")
 print(f"交易数据形状: {trade.shape}")
 print(f"股票数量: {len(train.tic.unique())}")
@@ -313,88 +313,205 @@ for model_name, model in trained_models.items():
 # 结果比较和可视化
 # ================================
 
+def plot_net_value_comparison(all_results, trade_data, env_kwargs):
+    """
+    绘制净值曲线对比图
+    包括各模型的净值曲线和股票基准净值曲线
+    """
+    import matplotlib.pyplot as plt
+    import matplotlib.dates as mdates
+    from datetime import datetime
+    
+    plt.figure(figsize=(16, 10))
+    
+    # 创建两个子图：一个显示绝对净值，一个显示相对收益率
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 12))
+    
+    # 准备基准数据（股票本身的净值曲线）
+    if not trade_data.empty and 'close' in trade_data.columns:
+        trade_dates = pd.to_datetime(trade_data['time'] if 'time' in trade_data.columns else trade_data['date'])
+        initial_amount = env_kwargs["initial_amount"]
+        
+        # 计算可购买的股票数量（基于第一天的价格）
+        initial_price = trade_data['close'].iloc[0]
+        shares = initial_amount / initial_price
+        
+        # 计算股票基准净值曲线
+        benchmark_values = trade_data['close'] * shares
+        benchmark_returns = (benchmark_values / initial_amount - 1) * 100
+        
+        # 绘制基准净值曲线（绝对值）
+        ax1.plot(trade_dates, benchmark_values, 
+                label='Stock Benchmark (Buy & Hold)', 
+                linewidth=3, color='black', linestyle='--', alpha=0.8)
+        
+        # 绘制基准收益率曲线
+        ax2.plot(trade_dates, benchmark_returns, 
+                label='Stock Benchmark (Buy & Hold)', 
+                linewidth=3, color='black', linestyle='--', alpha=0.8)
+        
+        print(f"基准策略信息:")
+        print(f"  初始股价: {initial_price:.2f}")
+        print(f"  最终股价: {trade_data['close'].iloc[-1]:.2f}")
+        print(f"  可购买股数: {shares:.2f}")
+        print(f"  基准最终净值: {benchmark_values.iloc[-1]:.2f}")
+        print(f"  基准总收益率: {benchmark_returns.iloc[-1]:.2f}%")
+    
+    # 颜色和线型配置
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
+    line_styles = ['-', '-', '-', '-', '-', '-']
+    
+    # 绘制各模型的净值曲线
+    for i, (model_name, result) in enumerate(all_results.items()):
+        if result['account_value'] is not None:
+            account_value = result['account_value']
+            model_dates = pd.to_datetime(account_value['date'])
+            model_values = account_value['account_value']
+            
+            # 计算相对收益率（相对于初始金额）
+            model_returns = (model_values / initial_amount - 1) * 100
+            
+            color = colors[i % len(colors)]
+            line_style = line_styles[i % len(line_styles)]
+            
+            # 绘制净值曲线（绝对值）
+            ax1.plot(model_dates, model_values, 
+                    label=f'{model_name} Strategy', 
+                    linewidth=2.5, color=color, linestyle=line_style, alpha=0.9)
+            
+            # 绘制收益率曲线
+            ax2.plot(model_dates, model_returns, 
+                    label=f'{model_name} Strategy', 
+                    linewidth=2.5, color=color, linestyle=line_style, alpha=0.9)
+            
+            print(f"{model_name} 策略信息:")
+            print(f"  最终净值: {model_values.iloc[-1]:.2f}")
+            print(f"  总收益率: {model_returns.iloc[-1]:.2f}%")
+    
+    # 设置第一个子图（绝对净值）
+    ax1.set_title('Portfolio Net Value Comparison', fontsize=16, fontweight='bold', pad=20)
+    ax1.set_xlabel('Date', fontsize=12)
+    ax1.set_ylabel('Portfolio Value (CNY)', fontsize=12)
+    ax1.legend(loc='upper left', fontsize=10, framealpha=0.9)
+    ax1.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
+    ax1.tick_params(axis='x', rotation=45)
+    
+    # 添加水平线显示初始金额
+    ax1.axhline(y=initial_amount, color='gray', linestyle=':', alpha=0.5, label='Initial Amount')
+    
+    # 格式化y轴显示
+    ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'¥{x:,.0f}'))
+    
+    # 设置第二个子图（收益率）
+    ax2.set_title('Portfolio Return Rate Comparison', fontsize=16, fontweight='bold', pad=20)
+    ax2.set_xlabel('Date', fontsize=12)
+    ax2.set_ylabel('Return Rate (%)', fontsize=12)
+    ax2.legend(loc='upper left', fontsize=10, framealpha=0.9)
+    ax2.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
+    ax2.tick_params(axis='x', rotation=45)
+    
+    # 添加零线
+    ax2.axhline(y=0, color='gray', linestyle=':', alpha=0.5)
+    
+    # 格式化日期轴
+    for ax in [ax1, ax2]:
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
+    
+    plt.tight_layout()
+    plt.savefig("results/net_value_comparison.png", dpi=300, bbox_inches='tight')
+    plt.show()
+    
+    # 创建性能统计表
+    create_performance_summary_table(all_results, trade_data, initial_amount)
+
+def create_performance_summary_table(all_results, trade_data, initial_amount):
+    """创建详细的性能统计表"""
+    import matplotlib.pyplot as plt
+    
+    performance_data = []
+    
+    # 添加基准数据
+    if not trade_data.empty:
+        initial_price = trade_data['close'].iloc[0]
+        final_price = trade_data['close'].iloc[-1]
+        benchmark_return = (final_price - initial_price) / initial_price * 100
+        
+        # 计算基准的其他指标
+        price_returns = trade_data['close'].pct_change().dropna()
+        benchmark_volatility = price_returns.std() * np.sqrt(252) * 100
+        benchmark_sharpe = (benchmark_return / 100) / (benchmark_volatility / 100) if benchmark_volatility > 0 else 0
+        
+        # 计算最大回撤
+        cumulative_returns = (1 + price_returns).cumprod()
+        rolling_max = cumulative_returns.expanding().max()
+        drawdowns = (cumulative_returns - rolling_max) / rolling_max * 100
+        benchmark_max_dd = drawdowns.min()
+        
+        performance_data.append({
+            'Strategy': 'Stock Benchmark',
+            'Total Return (%)': f"{benchmark_return:.2f}",
+            'Volatility (%)': f"{benchmark_volatility:.2f}",
+            'Sharpe Ratio': f"{benchmark_sharpe:.3f}",
+            'Max Drawdown (%)': f"{benchmark_max_dd:.2f}",
+            'Final Value (¥)': f"{final_price * (initial_amount / initial_price):,.0f}"
+        })
+    
+    # 添加各模型数据
+    for model_name, result in all_results.items():
+        if result['account_value'] is not None:
+            account_value = result['account_value']
+            final_value = account_value['account_value'].iloc[-1]
+            total_return = (final_value - initial_amount) / initial_amount * 100
+            
+            # 计算其他指标
+            daily_returns = account_value['account_value'].pct_change().dropna()
+            if len(daily_returns) > 1:
+                volatility = daily_returns.std() * np.sqrt(252) * 100
+                sharpe_ratio = (total_return / 100) / (volatility / 100) if volatility > 0 else 0
+                
+                # 最大回撤
+                cumulative = (1 + daily_returns).cumprod()
+                rolling_max = cumulative.expanding().max()
+                drawdown = (cumulative - rolling_max) / rolling_max * 100
+                max_drawdown = drawdown.min()
+            else:
+                volatility = 0
+                sharpe_ratio = 0
+                max_drawdown = 0
+            
+            performance_data.append({
+                'Strategy': f'{model_name} Strategy',
+                'Total Return (%)': f"{total_return:.2f}",
+                'Volatility (%)': f"{volatility:.2f}",
+                'Sharpe Ratio': f"{sharpe_ratio:.3f}",
+                'Max Drawdown (%)': f"{max_drawdown:.2f}",
+                'Final Value (¥)': f"{final_value:,.0f}"
+            })
+    
+    # 创建表格
+    performance_df = pd.DataFrame(performance_data)
+    print("\n" + "="*80)
+    print("详细性能对比表")
+    print("="*80)
+    print(performance_df.to_string(index=False))
+    print("="*80)
+    
+    # 保存到CSV
+    performance_df.to_csv("results/detailed_performance_comparison.csv", index=False)
+    print("详细性能对比表已保存到: results/detailed_performance_comparison.csv")
+    
+    return performance_df
+
+# 绘制比较图表
+if len(all_results) > 1:
+    plot_net_value_comparison(all_results, trade, env_kwargs)
+
 if performance_comparison:
     print("\n=== 模型性能比较 ===")
     comparison_df = pd.DataFrame(performance_comparison)
     print(comparison_df.to_string(index=False))
     comparison_df.to_csv("results/model_performance_comparison.csv", index=False)
-
-# 绘制比较图表
-if len(all_results) > 1:
-    import matplotlib.pyplot as plt
-    
-    plt.figure(figsize=(15, 10))
-    
-    # 资产曲线比较
-    plt.subplot(2, 2, 1)
-    for model_name, result in all_results.items():
-        if result['account_value'] is not None:
-            account_value = result['account_value']
-            plt.plot(pd.to_datetime(account_value['date']), 
-                    account_value['account_value'], 
-                    label=model_name, linewidth=2)
-    
-    plt.title("Portfolio Value Comparison")
-    plt.xlabel("Date")
-    plt.ylabel("Portfolio Value")
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    
-    # 动作比较
-    plt.subplot(2, 2, 2)
-    model_names = list(all_results.keys())
-    total_trades = [len(all_results[name]['actions']) if all_results[name]['actions'] is not None else 0 
-                   for name in model_names]
-    plt.bar(model_names, total_trades)
-    plt.title("Total Trades Comparison")
-    plt.xlabel("Model")
-    plt.ylabel("Number of Trades")
-    plt.xticks(rotation=45)
-    
-    # 收益率比较
-    plt.subplot(2, 2, 3)
-    returns = []
-    for name in model_names:
-        if all_results[name]['account_value'] is not None:
-            account_value = all_results[name]['account_value']
-            initial_value = env_kwargs["initial_amount"]
-            final_value = account_value['account_value'].iloc[-1]
-            total_return = (final_value - initial_value) / initial_value
-            returns.append(total_return)
-        else:
-            returns.append(0)
-    
-    colors = ['green' if r > 0 else 'red' for r in returns]
-    plt.bar(model_names, returns, color=colors, alpha=0.7)
-    plt.title("Total Return Comparison")
-    plt.xlabel("Model")
-    plt.ylabel("Total Return")
-    plt.xticks(rotation=45)
-    plt.axhline(y=0, color='black', linestyle='-', alpha=0.3)
-    
-    # 基准比较（买入持有策略）
-    plt.subplot(2, 2, 4)
-    if not trade.empty:
-        initial_price = trade['close'].iloc[0]
-        final_price = trade['close'].iloc[-1]
-        buy_hold_return = (final_price - initial_price) / initial_price
-        
-        strategy_returns = returns + [buy_hold_return]
-        strategy_names = model_names + ['Buy & Hold']
-        colors = ['blue'] * len(model_names) + ['orange']
-        
-        plt.bar(strategy_names, strategy_returns, color=colors, alpha=0.7)
-        plt.title("Strategy vs Buy & Hold")
-        plt.xlabel("Strategy")
-        plt.ylabel("Total Return")
-        plt.xticks(rotation=45)
-        plt.axhline(y=0, color='black', linestyle='-', alpha=0.3)
-        
-        print(f"\n买入持有基准收益率: {buy_hold_return:.4f}")
-    
-    plt.tight_layout()
-    plt.savefig("results/signal_trading_comparison.png", dpi=150, bbox_inches='tight')
-    plt.show()
 
 # ================================
 # 保存最终结果
@@ -488,9 +605,19 @@ print("\n结果数据:")
 print("- results/signal_trading_final_results.pkl: 完整结果（pickle格式）")
 print("- results/signal_trading_final_results.json: 完整结果（JSON格式）")
 print("- results/model_performance_comparison.csv: 模型性能比较")
-print("- results/signal_trading_comparison.png: 可视化比较图")
+print("- results/net_value_comparison.png: 净值曲线对比图")
+print("- results/detailed_performance_comparison.csv: 详细性能对比表")
 print("- results/*_account_value.csv: 各模型的资产曲线")
 print("- results/*_actions.csv: 各模型的交易动作")
+
+print("\n可视化图表:")
+print("- results/net_value_comparison.png: 包含股票基准的净值曲线对比图")
+print("  └── 上半部分: 绝对净值对比（包含初始金额参考线）")
+print("  └── 下半部分: 收益率对比（包含零线）")
+print("- 图表特色:")
+print("  └── 股票基准: 黑色虚线（买入持有策略）")
+print("  └── 各模型策略: 不同颜色实线")
+print("  └── 详细的性能统计信息会在控制台输出")
 
 print("\n如何加载保存的模型:")
 for model_name in trained_models.keys():
